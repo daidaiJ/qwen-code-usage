@@ -142,6 +142,32 @@ start /B qwen-usage.exe server
       "command": "input=$(cat); /path/to/qwen-usage record <<< \"$input\""
     }
   }
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '/path/to/qwen-usage start '",
+            "name": "qwen-usage-start",
+            "description": "Start qwen-usage server for token tracking"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '/path/to/qwen-usage stop '",
+            "name": "qwen-usage-stop",
+            "description": "Stop qwen-usage server when session ends"
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 
