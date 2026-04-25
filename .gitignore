@@ -1,0 +1,32 @@
+# Executable files
+*.exe
+*.out
+*.app
+
+# Build outputs
+bin/
+build/
+dist/
+
+# Qwen Code specific
+.qwen/
+
+# Go build artifacts
+*.o
+*.a
+vendor/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
