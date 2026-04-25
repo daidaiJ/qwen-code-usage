@@ -265,4 +265,4 @@ qwen-usage clear -h       # 数据清理帮助
 
 ## License
 
-MIT
+Apache-2.0 license
