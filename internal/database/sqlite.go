@@ -338,6 +338,15 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 			if stats.PromptTokens > 0 {
 				stats.CachePercent = float64(stats.CachedTokens) / float64(stats.PromptTokens) * 100
 			}
+			// 计算未命中缓存 token 吞吐量 (tokens/s)
+			latencySec := float64(stats.TotalLatencyMs) / 1000.0
+			if latencySec > 0 {
+				uncachedTokens := stats.PromptTokens - stats.CachedTokens
+				if uncachedTokens < 0 {
+					uncachedTokens = 0
+				}
+				stats.TokensPerSec = float64(uncachedTokens+stats.CompletionTokens) / latencySec
+			}
 		}
 	}
 

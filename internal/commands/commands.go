@@ -177,11 +177,11 @@ func outputMarkdown(stats *database.StatsResponse, period string) {
 
 	fmt.Println("## 按模型统计")
 	fmt.Println("")
-	fmt.Println("| Model | Requests | Latency(Avg/P50/P95) | Prompt | Completion | Cached | Thoughts | Cache% |")
-	fmt.Println("|-------|----------|----------------------|--------|------------|--------|----------|--------|")
+	fmt.Println("| Model | Requests | Latency(Avg/P50/P95) | Prompt | Completion | Cached | Thoughts | Cache% | t/s |")
+	fmt.Println("|-------|----------|----------------------|--------|------------|--------|----------|--------|-----|")
 
 	for _, m := range stats.Models {
-		fmt.Printf("| %s | %d | %.0fms/%.0fms/%.0fms | %s | %s | %s | %s | %.1f%% |\n",
+		fmt.Printf("| %s | %d | %.0fms/%.0fms/%.0fms | %s | %s | %s | %s | %.1f%% | %.1f |\n",
 			m.ModelName,
 			m.RequestCount,
 			m.AvgLatencyMs,
@@ -192,6 +192,7 @@ func outputMarkdown(stats *database.StatsResponse, period string) {
 			formatNumber(m.CachedTokens),
 			formatNumber(m.ThoughtsTokens),
 			m.CachePercent,
+			m.TokensPerSec,
 		)
 	}
 

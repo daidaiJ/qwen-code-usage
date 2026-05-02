@@ -122,6 +122,7 @@ type ModelStats struct {
 	ThoughtsTokens   int64
 	TotalTokens      int64
 	CachePercent     float64
+	TokensPerSec     float64 // 未命中缓存 token 吞吐量 (prompt-cached+completion) / 延迟秒数
 }
 
 // StatsResponse stats 响应
