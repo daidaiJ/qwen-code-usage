@@ -177,7 +177,7 @@ func outputMarkdown(stats *database.StatsResponse, period string) {
 
 	fmt.Println("## 按模型统计")
 	fmt.Println("")
-	fmt.Println("| Model | Requests | Latency(Avg/P50/P95) | Prompt | Completion | Cached | Thoughts | Cache% | t/s |")
+	fmt.Println("| Model | Requests | Latency(Avg/P50/P95) | Prompt | Completion | Cached | Thoughts | Cache% | TPS(token/s) |")
 	fmt.Println("|-------|----------|----------------------|--------|------------|--------|----------|--------|-----|")
 
 	for _, m := range stats.Models {

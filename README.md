@@ -171,6 +171,46 @@ start /B qwen-usage.exe server
 }
 ```
 
+#### 使用 start.sh 脚本（推荐）
+
+项目根目录提供了 `start.sh` 脚本，会自动检测 server 是否运行、按需启动并增加会话计数：
+
+```bash
+# 将 start.sh 复制到合适位置（或直接引用项目中的路径）
+cp /path/to/qwen-usage/start.sh ~/.local/bin/qwen-usage-start.sh
+chmod +x ~/.local/bin/qwen-usage-start.sh
+```
+
+然后在 `settings.json` 的 `SessionStart` hook 中引用：
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '${HOME}/.local/bin/qwen-usage-start.sh'",
+            "name": "qwen-usage-start",
+            "description": "Start qwen-usage server for token tracking"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+脚本支持以下环境变量自定义：
+
+| 环境变量 | 默认值 | 说明 |
+|---------|-------|------|
+| `QWEN_USAGE_EXE` | `${HOME}/.local/bin/qwen-usage` | qwen-usage 可执行文件路径 |
+| `WEBSEARCH_EXE` | `websearch` | 回退使用的 websearch 可执行文件 |
+| `SERVER_ADDR` | `127.0.0.1:9527` | server 监听地址 |
+| `CONFIG_PATH` | `${HOME}/.qwen/websearch/config.yaml` | websearch 配置文件路径 |
+
 ### 3. 导出报表
 
 ```bash
