@@ -461,6 +461,7 @@ func (db *SQLiteDB) GetContextWindowExtremes() (*ContextWindowExtremes, error) {
 		&extremes.MaxTotalInputTokens,
 		&extremes.MaxTotalOutputTokens,
 	)
+	extremes.MaxContextWindowSize = (extremes.MaxTotalInputTokens + extremes.MaxTotalOutputTokens)
 	if err == sql.ErrNoRows {
 		return extremes, nil
 	}
