@@ -49,15 +49,16 @@ qwen-usage/
 │   record    │    成功/失败都返回   │    server       │
 │  (CLI客户端) │ ◄───────────────── │  (后台守护进程)  │
 └─────────────┘    立即输出状态行    └────────┬────────┘
-                                             │
-                                             ▼
-                                      ┌─────────────┐
-                                      │   SQLite    │
-                                      └─────────────┘
+       │                                      │
+       │ server不可用时                        ▼
+       │ 直接写入 SQLite               ┌─────────────┐
+       └──────────────────────────────►│   SQLite    │
+                                       └─────────────┘
 ```
 
-- **Server**：后台 HTTP 服务，维护内存缓存累计值，计算增量后写入 SQLite
-- **CLI Client**：轻量客户端，server 不可用时自动降级直接输出状态行
+- **Server**：后台 HTTP 服务，维护内存缓存累计值（`sync.Mutex` 保护），计算增量后写入 SQLite
+- **CLI Client**：轻量客户端，server 不可用时自动降级直接写入 SQLite + 输出状态行
+- **会话管理**：`start` 自动探测并启动 server，`stop` 减少计数，归零时 server 优雅退出
 - **直接访问**：`export` / `clear` 命令直接操作 SQLite，不依赖 server
 
 ## 安装
@@ -117,17 +118,23 @@ cp bin/qwen-usage ~/.local/bin/
 
 ## 使用
 
-### 1. 启动 Server
+### 1. 会话管理（自动）
+
+`start` 命令会自动探测 server 是否就绪，未就绪则在后台启动，然后增加会话计数：
 
 ```bash
-# 前台运行
-./qwen-usage server
+qwen-usage start    # 自动探测/启动 server，计数 +1
+qwen-usage stop     # 计数 -1，归零时 server 自动退出
+```
 
-# 后台运行（Linux/macOS/WSL）
-./qwen-usage server &
+多会话场景：每个 Qwen Code 会话启动时调用 `start`，结束时调用 `stop`，计数归零后 server 自动关闭。
 
-# 后台运行（Windows）
-start /B qwen-usage.exe server
+如需手动管理 server：
+
+```bash
+qwen-usage server              # 前台运行
+qwen-usage server &            # Linux/macOS 后台运行
+qwen-usage kill                # 强制关闭
 ```
 
 ### 2. 配置 Qwen Code Status Line
@@ -141,14 +148,14 @@ start /B qwen-usage.exe server
       "type": "command",
       "command": "input=$(cat); /path/to/qwen-usage record <<< \"$input\""
     }
-  }
+  },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c '/path/to/qwen-usage start '",
+            "command": "/path/to/qwen-usage start",
             "name": "qwen-usage-start",
             "description": "Start qwen-usage server for token tracking"
           }
@@ -160,7 +167,7 @@ start /B qwen-usage.exe server
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c '/path/to/qwen-usage stop '",
+            "command": "/path/to/qwen-usage stop",
             "name": "qwen-usage-stop",
             "description": "Stop qwen-usage server when session ends"
           }
@@ -171,45 +178,7 @@ start /B qwen-usage.exe server
 }
 ```
 
-#### 使用 start.sh 脚本（推荐）
-
-项目根目录提供了 `start.sh` 脚本，会自动检测 server 是否运行、按需启动并增加会话计数：
-
-```bash
-# 将 start.sh 复制到合适位置（或直接引用项目中的路径）
-cp /path/to/qwen-usage/start.sh ~/.local/bin/qwen-usage-start.sh
-chmod +x ~/.local/bin/qwen-usage-start.sh
-```
-
-然后在 `settings.json` 的 `SessionStart` hook 中引用：
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash '${HOME}/.local/bin/qwen-usage-start.sh'",
-            "name": "qwen-usage-start",
-            "description": "Start qwen-usage server for token tracking"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-脚本支持以下环境变量自定义：
-
-| 环境变量 | 默认值 | 说明 |
-|---------|-------|------|
-| `QWEN_USAGE_EXE` | `${HOME}/.local/bin/qwen-usage` | qwen-usage 可执行文件路径 |
-| `WEBSEARCH_EXE` | `websearch` | 回退使用的 websearch 可执行文件 |
-| `SERVER_ADDR` | `127.0.0.1:9527` | server 监听地址 |
-| `CONFIG_PATH` | `${HOME}/.qwen/websearch/config.yaml` | websearch 配置文件路径 |
+> `start` 会自动探测并启动 server，无需额外的启动脚本。
 
 ### 3. 导出报表
 
@@ -226,6 +195,14 @@ chmod +x ~/.local/bin/qwen-usage-start.sh
 ./qwen-usage export -n 50 -json  # 最近50条记录(JSON格式)
 ```
 
+**报表内容**：
+
+- **按模型统计**：请求数、延迟（Avg/P90/P95）、各类 token、缓存命中率、吞吐量
+- **汇总**：总调用、总 token、平均延迟
+- **上下文窗口历史最值**：最大上下文窗口容量、最大输入/输出 token 数
+
+> 延迟百分位使用 SQL 窗口函数在数据库层计算，避免全量加载延迟数据到内存。
+
 ## 测试
 
 ```bash
@@ -239,6 +216,28 @@ make test-coverage
 go test -v ./internal/database
 go test -v ./test/mocks
 ```
+
+## 数据库表
+
+### `cumulative_state` — 累计状态
+
+用于增量计算，记录每个 `(session_id, model_name)` 的累计 API 请求、延迟、各类 token 数。
+
+### `call_records` — 单次调用记录
+
+每次 API 调用的增量数据，包含延迟、各类 token 数、记录时间。按时间索引。
+
+### `context_window_extremes` — 上下文窗口历史最值
+
+单行聚合表，记录历史中出现的最大上下文窗口参数：
+
+| 字段 | 说明 |
+|------|------|
+| `max_context_window_size` | 最大上下文窗口容量 |
+| `max_total_input_tokens` | 最大输入 token 数 |
+| `max_total_output_tokens` | 最大输出 token 数 |
+
+每次 `record` 收到有效 `context_window_size > 0` 的数据时，使用 `MAX()` 语义原子更新。该表不记录逐条快照，仅保留历史最值。
 
 ## 开发
 
@@ -257,14 +256,14 @@ make lint
 ## 命令汇总
 
 ```bash
-# 服务管理
-qwen-usage server              # 启动后台服务
-qwen-usage start               # 增加会话计数（由 hook 调用）
-qwen-usage stop                # 减少会话计数，为0时关闭服务（由 hook 调用）
-qwen-usage kill                # 强制关闭服务
+# 会话管理（自动）
+qwen-usage start               # 自动探测/启动 server，增加会话计数
+qwen-usage stop                # 减少会话计数，归零时 server 自动退出
+qwen-usage server              # 手动启动 server（前台）
+qwen-usage kill                # 强制关闭 server
 
 # 数据记录
-qwen-usage record              # 记录用量（由 Qwen Code 自动调用）
+qwen-usage record              # 记录用量（server 不可用时自动写入本地 DB）
 
 # 数据导出
 qwen-usage export              # 导出今天报表

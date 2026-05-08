@@ -13,7 +13,7 @@ BINARY_NAME=qwen-usage
 BINARY_WINDOWS=$(BINARY_NAME).exe
 
 # Main package
-MAIN_PACKAGE=./cmd/qwen-usage
+MAIN_PACKAGE=./cmd
 
 # Build directory
 BUILD_DIR=./bin

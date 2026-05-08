@@ -67,8 +67,10 @@ const (
   qwen-usage start
 
 功能:
-  增加服务器的会话计数，由 Qwen Code 的 SessionStart hook 调用。
-  当计数从 0 变为 1 时，服务会自动启动。
+  探测 server 是否就绪，未就绪则自动在后台启动 server，
+  然后发送 /session/start 增加会话计数。
+
+  由 Qwen Code 的 SessionStart hook 调用。
 
 选项:
   -h, --help      显示帮助信息
@@ -83,8 +85,11 @@ const (
   qwen-usage stop
 
 功能:
-  减少服务器的会话计数，由 Qwen Code 的 SessionEnd hook 调用。
-  当计数归零时，服务会自动关闭。
+  向 server 发送 /session/end 减少会话计数。
+  当计数归零时，server 自动优雅退出。
+  若 server 已不存在，静默返回。
+
+  由 Qwen Code 的 SessionEnd hook 调用。
 
 选项:
   -h, --help      显示帮助信息

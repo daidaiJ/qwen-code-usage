@@ -13,22 +13,25 @@ type MockDB struct {
 	mu sync.RWMutex
 
 	// 存储数据
-	cumulativeStates map[string]*database.CumulativeState
-	callRecords      []database.CallRecord
+	cumulativeStates    map[string]*database.CumulativeState
+	callRecords         []database.CallRecord
+	contextWindowMax    *database.ContextWindowExtremes
 
 	// 记录调用
 	GetCumulativeStateCalls []struct {
 		SessionID string
 		ModelName string
 	}
-	UpdateCumulativeStateCalls []*database.CumulativeState
-	InsertCallRecordCalls      []*database.CallRecord
-	DeleteOldRecordsCalls      []time.Time
-	GetStatsCalls              []struct {
+	UpdateCumulativeStateCalls      []*database.CumulativeState
+	InsertCallRecordCalls           []*database.CallRecord
+	DeleteOldRecordsCalls           []time.Time
+	GetStatsCalls                   []struct {
 		Start time.Time
 		End   time.Time
 	}
-	CloseCalls int
+	GetContextWindowExtremesCalls    int
+	UpdateContextWindowExtremesCalls []*database.ContextWindowExtremes
+	CloseCalls                       int
 
 	// 可配置的错误返回
 	GetCumulativeStateErr    error
@@ -242,6 +245,41 @@ func (m *MockDB) getCallRecordsInternal(startTime, endTime time.Time) ([]databas
 	return records, nil
 }
 
+// GetContextWindowExtremes 获取上下文窗口历史最值
+func (m *MockDB) GetContextWindowExtremes() (*database.ContextWindowExtremes, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.GetContextWindowExtremesCalls++
+
+	if m.contextWindowMax != nil {
+		return m.contextWindowMax, nil
+	}
+	return &database.ContextWindowExtremes{}, nil
+}
+
+// UpdateContextWindowExtremes 更新上下文窗口历史最值
+func (m *MockDB) UpdateContextWindowExtremes(extremes *database.ContextWindowExtremes) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.UpdateContextWindowExtremesCalls = append(m.UpdateContextWindowExtremesCalls, extremes)
+
+	if m.contextWindowMax == nil {
+		m.contextWindowMax = &database.ContextWindowExtremes{}
+	}
+	if extremes.MaxContextWindowSize > m.contextWindowMax.MaxContextWindowSize {
+		m.contextWindowMax.MaxContextWindowSize = extremes.MaxContextWindowSize
+	}
+	if extremes.MaxTotalInputTokens > m.contextWindowMax.MaxTotalInputTokens {
+		m.contextWindowMax.MaxTotalInputTokens = extremes.MaxTotalInputTokens
+	}
+	if extremes.MaxTotalOutputTokens > m.contextWindowMax.MaxTotalOutputTokens {
+		m.contextWindowMax.MaxTotalOutputTokens = extremes.MaxTotalOutputTokens
+	}
+	return nil
+}
+
 // Close 关闭连接
 func (m *MockDB) Close() error {
 	m.mu.Lock()
@@ -258,11 +296,14 @@ func (m *MockDB) Reset() {
 
 	m.cumulativeStates = make(map[string]*database.CumulativeState)
 	m.callRecords = []database.CallRecord{}
+	m.contextWindowMax = nil
 	m.GetCumulativeStateCalls = nil
 	m.UpdateCumulativeStateCalls = nil
 	m.InsertCallRecordCalls = nil
 	m.DeleteOldRecordsCalls = nil
 	m.GetStatsCalls = nil
+	m.GetContextWindowExtremesCalls = 0
+	m.UpdateContextWindowExtremesCalls = nil
 	m.CloseCalls = 0
 
 	m.GetCumulativeStateErr = nil

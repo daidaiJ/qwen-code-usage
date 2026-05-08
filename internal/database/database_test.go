@@ -243,3 +243,75 @@ func TestStatsResponse(t *testing.T) {
 		t.Errorf("expected RequestCount to be 10, got %d", stats.Total.RequestCount)
 	}
 }
+
+func TestContextWindowExtremes(t *testing.T) {
+	tmpDir := filepath.Join(os.TempDir(), "qwen-usage-extremes-test")
+	os.MkdirAll(tmpDir, 0755)
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	config.ResetConfig()
+	config.SetConfig(&config.Config{
+		ServerAddr:           "127.0.0.1:9527",
+		DBPath:               dbPath,
+		ClientTimeoutMs:      100,
+		ServerWriteTimeoutMs: 50,
+	})
+
+	ResetDB()
+
+	db, err := NewSQLiteDBWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// 初始值应为 0
+	extremes, err := db.GetContextWindowExtremes()
+	if err != nil {
+		t.Fatalf("GetContextWindowExtremes failed: %v", err)
+	}
+	if extremes.MaxContextWindowSize != 0 {
+		t.Errorf("expected initial MaxContextWindowSize to be 0, got %d", extremes.MaxContextWindowSize)
+	}
+
+	// 第一次更新
+	err = db.UpdateContextWindowExtremes(&ContextWindowExtremes{
+		MaxContextWindowSize: 128000,
+		MaxTotalInputTokens: 50000,
+		MaxTotalOutputTokens: 10000,
+	})
+	if err != nil {
+		t.Fatalf("UpdateContextWindowExtremes failed: %v", err)
+	}
+
+	extremes, _ = db.GetContextWindowExtremes()
+	if extremes.MaxContextWindowSize != 128000 {
+		t.Errorf("expected MaxContextWindowSize 128000, got %d", extremes.MaxContextWindowSize)
+	}
+	if extremes.MaxTotalInputTokens != 50000 {
+		t.Errorf("expected MaxTotalInputTokens 50000, got %d", extremes.MaxTotalInputTokens)
+	}
+
+	// 第二次更新：更大的值应覆盖，更小的值应保留
+	err = db.UpdateContextWindowExtremes(&ContextWindowExtremes{
+		MaxContextWindowSize: 200000,
+		MaxTotalInputTokens: 30000,
+		MaxTotalOutputTokens: 20000,
+	})
+	if err != nil {
+		t.Fatalf("UpdateContextWindowExtremes second call failed: %v", err)
+	}
+
+	extremes, _ = db.GetContextWindowExtremes()
+	if extremes.MaxContextWindowSize != 200000 {
+		t.Errorf("expected MaxContextWindowSize 200000, got %d", extremes.MaxContextWindowSize)
+	}
+	if extremes.MaxTotalInputTokens != 50000 {
+		t.Errorf("expected MaxTotalInputTokens 50000 (kept max), got %d", extremes.MaxTotalInputTokens)
+	}
+	if extremes.MaxTotalOutputTokens != 20000 {
+		t.Errorf("expected MaxTotalOutputTokens 20000, got %d", extremes.MaxTotalOutputTokens)
+	}
+}

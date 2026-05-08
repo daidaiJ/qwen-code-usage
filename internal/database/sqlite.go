@@ -132,6 +132,14 @@ func (db *SQLiteDB) createTables() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_recorded_at ON call_records(recorded_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_model ON call_records(session_id, model_name)`,
+		`CREATE TABLE IF NOT EXISTS context_window_extremes (
+			id INTEGER PRIMARY KEY DEFAULT 1,
+			max_context_window_size INTEGER NOT NULL DEFAULT 0,
+			max_total_input_tokens INTEGER NOT NULL DEFAULT 0,
+			max_total_output_tokens INTEGER NOT NULL DEFAULT 0,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`INSERT OR IGNORE INTO context_window_extremes (id) VALUES (1)`,
 	}
 
 	for _, q := range queries {
@@ -305,9 +313,8 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 		return nil, err
 	}
 
-	// 按模型分组统计
+	// 按模型分组统计（单次遍历）
 	modelStatsMap := make(map[string]*ModelStats)
-	var allLatencies []int
 	var totalTokens int64
 	var totalLatency int
 
@@ -325,20 +332,49 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 		stats.ThoughtsTokens += int64(r.ThoughtsTokens)
 		stats.TotalTokens += int64(r.TotalTokens)
 		stats.TotalLatencyMs += r.LatencyMs
-		allLatencies = append(allLatencies, r.LatencyMs)
 
 		totalTokens += int64(r.TotalTokens)
 		totalLatency += r.LatencyMs
 	}
 
+	// 通过 SQL 窗口函数计算百分位延迟（避免全量加载延迟数据到内存）
+	percentileQuery := `
+		SELECT model_name, latency_ms FROM (
+			SELECT model_name, latency_ms,
+				ROW_NUMBER() OVER (PARTITION BY model_name ORDER BY latency_ms) - 1 AS rn,
+				COUNT(*) OVER (PARTITION BY model_name) - 1 AS max_idx
+			FROM call_records
+			WHERE recorded_at >= ? AND recorded_at <= ?
+		) WHERE rn IN (max_idx * 90 / 100, max_idx * 95 / 100)
+		ORDER BY model_name, rn`
+
+	pRows, pErr := db.conn.Query(percentileQuery, startTime, endTime)
+	if pErr == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var mName string
+			var latMs int
+			if err := pRows.Scan(&mName, &latMs); err != nil {
+				continue
+			}
+			if stats, ok := modelStatsMap[mName]; ok {
+				if stats.P90LatencyMs == 0 {
+					stats.P90LatencyMs = float64(latMs)
+				} else if stats.P95LatencyMs == 0 {
+					stats.P95LatencyMs = float64(latMs)
+				}
+			}
+		}
+	}
+
 	// 计算延迟统计
+	var models []ModelStats
 	for _, stats := range modelStatsMap {
 		if stats.RequestCount > 0 {
 			stats.AvgLatencyMs = float64(stats.TotalLatencyMs) / float64(stats.RequestCount)
 			if stats.PromptTokens > 0 {
 				stats.CachePercent = float64(stats.CachedTokens) / float64(stats.PromptTokens) * 100
 			}
-			// 计算未命中缓存 token 吞吐量 (tokens/s)
 			latencySec := float64(stats.TotalLatencyMs) / 1000.0
 			if latencySec > 0 {
 				uncachedTokens := stats.PromptTokens - stats.CachedTokens
@@ -347,23 +383,6 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 				}
 				stats.TokensPerSec = float64(uncachedTokens+stats.CompletionTokens) / latencySec
 			}
-		}
-	}
-
-	// 计算百分位延迟
-	var models []ModelStats
-	for _, stats := range modelStatsMap {
-		// 收集该模型的延迟数据
-		var modelLatencies []int
-		for _, r := range records {
-			if r.ModelName == stats.ModelName {
-				modelLatencies = append(modelLatencies, r.LatencyMs)
-			}
-		}
-		sort.Ints(modelLatencies)
-		if len(modelLatencies) > 0 {
-			stats.P50LatencyMs = float64(modelLatencies[len(modelLatencies)*50/100])
-			stats.P95LatencyMs = float64(modelLatencies[len(modelLatencies)*95/100])
 		}
 		models = append(models, *stats)
 	}
@@ -379,10 +398,17 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 		avgLatency = float64(totalLatency) / float64(len(records))
 	}
 
+	// 上下文窗口最值
+	extremes, err := db.GetContextWindowExtremes()
+	if err != nil {
+		extremes = nil
+	}
+
 	return &StatsResponse{
-		Models:    models,
-		StartTime: startTime.Format("2006-01-02 15:04:05"),
-		EndTime:   endTime.Format("2006-01-02 15:04:05"),
+		Models:         models,
+		ContextWindowMax: extremes,
+		StartTime:      startTime.Format("2006-01-02 15:04:05"),
+		EndTime:        endTime.Format("2006-01-02 15:04:05"),
 		Total: TotalStats{
 			RequestCount: len(records),
 			TotalTokens:  totalTokens,
@@ -419,6 +445,49 @@ func (db *SQLiteDB) GetRecentRecords(limit int) ([]CallRecord, error) {
 	}
 
 	return records, nil
+}
+
+// GetContextWindowExtremes 获取上下文窗口历史最值
+func (db *SQLiteDB) GetContextWindowExtremes() (*ContextWindowExtremes, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	extremes := &ContextWindowExtremes{}
+	query := `SELECT max_context_window_size, max_total_input_tokens, max_total_output_tokens
+		FROM context_window_extremes WHERE id = 1`
+
+	err := db.conn.QueryRow(query).Scan(
+		&extremes.MaxContextWindowSize,
+		&extremes.MaxTotalInputTokens,
+		&extremes.MaxTotalOutputTokens,
+	)
+	if err == sql.ErrNoRows {
+		return extremes, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return extremes, nil
+}
+
+// UpdateContextWindowExtremes 更新上下文窗口历史最值（取 max）
+func (db *SQLiteDB) UpdateContextWindowExtremes(extremes *ContextWindowExtremes) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	query := `UPDATE context_window_extremes SET
+		max_context_window_size = MAX(max_context_window_size, ?),
+		max_total_input_tokens = MAX(max_total_input_tokens, ?),
+		max_total_output_tokens = MAX(max_total_output_tokens, ?),
+		updated_at = CURRENT_TIMESTAMP
+		WHERE id = 1`
+
+	_, err := db.conn.Exec(query,
+		extremes.MaxContextWindowSize,
+		extremes.MaxTotalInputTokens,
+		extremes.MaxTotalOutputTokens,
+	)
+	return err
 }
 
 // Close 关闭数据库连接

@@ -4,6 +4,7 @@ package platform
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -84,4 +85,25 @@ func GetLogPath() string {
 // GetConfigPath 获取配置文件路径
 func GetConfigPath() string {
 	return filepath.Join(config.GetDataDir(), "config.json")
+}
+
+// StartServerInBackground 在后台启动 server 进程
+func StartServerInBackground() error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("获取可执行文件路径失败: %w", err)
+	}
+
+	cmd := exec.Command(exePath, "server")
+	cmd.Env = os.Environ()
+
+	// 分离标准IO，避免阻塞父进程
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	// 平台特定的进程分离
+	setSysProcAttr(cmd)
+
+	return cmd.Start()
 }

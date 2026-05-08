@@ -36,6 +36,10 @@ type DB interface {
 	// 统计
 	GetStats(startTime, endTime time.Time) (*StatsResponse, error)
 
+	// 上下文窗口最值
+	GetContextWindowExtremes() (*ContextWindowExtremes, error)
+	UpdateContextWindowExtremes(extremes *ContextWindowExtremes) error
+
 	// 获取最近记录
 	GetRecentRecords(limit int) ([]CallRecord, error)
 

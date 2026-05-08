@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ const version = "1.0.0"
 type Server struct {
 	db           database.DB
 	server       *http.Server
+	sessionMu    sync.Mutex
 	sessionCount int
 }
 
@@ -104,6 +106,18 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 			modelName = "unknown"
 		}
 		statusLine = fmt.Sprintf("model: %s | ctx:%.1f%%", modelName, input.ContextWindow.UsedPercentage)
+	}
+
+	// 更新上下文窗口历史最值
+	if input.ContextWindow.ContextWindowSize > 0 {
+		extremes := &database.ContextWindowExtremes{
+			MaxContextWindowSize: input.ContextWindow.ContextWindowSize,
+			MaxTotalInputTokens:  input.ContextWindow.TotalInputTokens,
+			MaxTotalOutputTokens: input.ContextWindow.TotalOutputTokens,
+		}
+		if err := s.db.UpdateContextWindowExtremes(extremes); err != nil {
+			logger.LogWarn("failed to update context window extremes: %v", err)
+		}
 	}
 
 	resp := database.RecordResponse{
@@ -249,11 +263,15 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.sessionMu.Lock()
 	s.sessionCount++
-	logger.LogInfo("session started, count=%d", s.sessionCount)
+	count := s.sessionCount
+	s.sessionMu.Unlock()
+
+	logger.LogInfo("session started, count=%d", count)
 
 	resp := database.SessionResponse{
-		Count:   s.sessionCount,
+		Count:   count,
 		Message: "session started",
 	}
 
@@ -268,19 +286,22 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.sessionMu.Lock()
 	s.sessionCount--
 	if s.sessionCount < 0 {
 		s.sessionCount = 0
 	}
+	count := s.sessionCount
+	s.sessionMu.Unlock()
 
-	logger.LogInfo("session ended, count=%d", s.sessionCount)
+	logger.LogInfo("session ended, count=%d", count)
 
 	resp := database.SessionResponse{
-		Count:   s.sessionCount,
+		Count:   count,
 		Message: "session ended",
 	}
 
-	if s.sessionCount == 0 {
+	if count == 0 {
 		resp.Message = "session ended, server shutting down"
 		go func() {
 			time.Sleep(100 * time.Millisecond)
