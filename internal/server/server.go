@@ -108,10 +108,11 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 		statusLine = fmt.Sprintf("model: %s | ctx:%.1f%%", modelName, input.ContextWindow.UsedPercentage)
 	}
 
-	// 更新上下文窗口历史最值
-	if input.ContextWindow.ContextWindowSize > 0 {
+	// 更新上下文窗口历史最值（上下文窗口 = 输入 + 输出 tokens）
+	inputOutputSum := input.ContextWindow.TotalInputTokens + input.ContextWindow.TotalOutputTokens
+	if inputOutputSum > 0 {
 		extremes := &database.ContextWindowExtremes{
-			MaxContextWindowSize: input.ContextWindow.ContextWindowSize,
+			MaxContextWindowSize: inputOutputSum,
 			MaxTotalInputTokens:  input.ContextWindow.TotalInputTokens,
 			MaxTotalOutputTokens: input.ContextWindow.TotalOutputTokens,
 		}

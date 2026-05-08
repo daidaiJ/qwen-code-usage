@@ -114,7 +114,7 @@ type ModelStats struct {
 	RequestCount     int
 	TotalLatencyMs   int
 	AvgLatencyMs     float64
-	P90LatencyMs     float64
+	P50LatencyMs     float64
 	P95LatencyMs     float64
 	PromptTokens     int64
 	CompletionTokens int64
@@ -127,19 +127,19 @@ type ModelStats struct {
 
 // StatsResponse stats 响应
 type StatsResponse struct {
-	Models              []ModelStats           `json:"models"`
-	Total               TotalStats             `json:"total"`
-	ContextWindowMax    *ContextWindowExtremes  `json:"context_window_max,omitempty"`
-	Period              string                 `json:"period"`
-	StartTime           string                 `json:"start_time"`
-	EndTime             string                 `json:"end_time"`
+	Models           []ModelStats           `json:"models"`
+	Total            TotalStats             `json:"total"`
+	ContextWindowMax *ContextWindowExtremes `json:"context_window_max,omitempty"`
+	Period           string                 `json:"period"`
+	StartTime        string                 `json:"start_time"`
+	EndTime          string                 `json:"end_time"`
 }
 
 // ContextWindowExtremes 上下文窗口历史最值（单行聚合）
 type ContextWindowExtremes struct {
-	MaxContextWindowSize  int `json:"max_context_window_size"`
-	MaxTotalInputTokens   int `json:"max_total_input_tokens"`
-	MaxTotalOutputTokens  int `json:"max_total_output_tokens"`
+	MaxContextWindowSize int `json:"max_context_window_size"`
+	MaxTotalInputTokens  int `json:"max_total_input_tokens"`
+	MaxTotalOutputTokens int `json:"max_total_output_tokens"`
 }
 
 // TotalStats 汇总统计

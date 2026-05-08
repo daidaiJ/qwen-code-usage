@@ -345,7 +345,7 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 				COUNT(*) OVER (PARTITION BY model_name) - 1 AS max_idx
 			FROM call_records
 			WHERE recorded_at >= ? AND recorded_at <= ?
-		) WHERE rn IN (max_idx * 90 / 100, max_idx * 95 / 100)
+		) WHERE rn IN (max_idx * 50 / 100, max_idx * 95 / 100)
 		ORDER BY model_name, rn`
 
 	pRows, pErr := db.conn.Query(percentileQuery, startTime, endTime)
@@ -358,8 +358,8 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 				continue
 			}
 			if stats, ok := modelStatsMap[mName]; ok {
-				if stats.P90LatencyMs == 0 {
-					stats.P90LatencyMs = float64(latMs)
+				if stats.P50LatencyMs == 0 {
+					stats.P50LatencyMs = float64(latMs)
 				} else if stats.P95LatencyMs == 0 {
 					stats.P95LatencyMs = float64(latMs)
 				}
@@ -405,10 +405,10 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 	}
 
 	return &StatsResponse{
-		Models:         models,
+		Models:           models,
 		ContextWindowMax: extremes,
-		StartTime:      startTime.Format("2006-01-02 15:04:05"),
-		EndTime:        endTime.Format("2006-01-02 15:04:05"),
+		StartTime:        startTime.Format("2006-01-02 15:04:05"),
+		EndTime:          endTime.Format("2006-01-02 15:04:05"),
 		Total: TotalStats{
 			RequestCount: len(records),
 			TotalTokens:  totalTokens,

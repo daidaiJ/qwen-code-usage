@@ -87,10 +87,11 @@ func recordLocalFallback(input database.StatusLineInput) string {
 			}
 		}
 
-		// 更新上下文窗口历史最值
-		if input.ContextWindow.ContextWindowSize > 0 {
+		// 更新上下文窗口历史最值（上下文窗口 = 输入 + 输出 tokens）
+		inputOutputSum := input.ContextWindow.TotalInputTokens + input.ContextWindow.TotalOutputTokens
+		if inputOutputSum > 0 {
 			extremes := &database.ContextWindowExtremes{
-				MaxContextWindowSize: input.ContextWindow.ContextWindowSize,
+				MaxContextWindowSize: inputOutputSum,
 				MaxTotalInputTokens:  input.ContextWindow.TotalInputTokens,
 				MaxTotalOutputTokens: input.ContextWindow.TotalOutputTokens,
 			}
@@ -295,7 +296,7 @@ func outputMarkdown(stats *database.StatsResponse, period string) {
 
 	fmt.Println("## 按模型统计")
 	fmt.Println("")
-	fmt.Println("| Model | Requests | Latency(Avg/P90/P95) | Prompt | Completion | Cached | Thoughts | Cache% | TPS(token/s) |")
+	fmt.Println("| Model | Requests | Latency(Avg/P50/P95) | Prompt | Completion | Cached | Thoughts | Cache% | TPS(token/s) |")
 	fmt.Println("|-------|----------|----------------------|--------|------------|--------|----------|--------|-----|")
 
 	for _, m := range stats.Models {
@@ -303,7 +304,7 @@ func outputMarkdown(stats *database.StatsResponse, period string) {
 			m.ModelName,
 			m.RequestCount,
 			m.AvgLatencyMs,
-			m.P90LatencyMs,
+			m.P50LatencyMs,
 			m.P95LatencyMs,
 			formatNumber(m.PromptTokens),
 			formatNumber(m.CompletionTokens),
