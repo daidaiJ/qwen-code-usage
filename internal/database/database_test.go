@@ -56,8 +56,8 @@ func TestCallRecord(t *testing.T) {
 func TestSQLiteDBCRUD(t *testing.T) {
 	// 创建临时数据库
 	tmpDir := filepath.Join(os.TempDir(), "qwen-usage-db-test")
-	os.MkdirAll(tmpDir, 0755)
-	defer os.RemoveAll(tmpDir)
+	_ = os.MkdirAll(tmpDir, 0755)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -76,7 +76,7 @@ func TestSQLiteDBCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// 测试 GetCumulativeState（不存在）
 	state, err := db.GetCumulativeState("test-session", "qwen-3-235b")
@@ -246,8 +246,8 @@ func TestStatsResponse(t *testing.T) {
 
 func TestContextWindowExtremes(t *testing.T) {
 	tmpDir := filepath.Join(os.TempDir(), "qwen-usage-extremes-test")
-	os.MkdirAll(tmpDir, 0755)
-	defer os.RemoveAll(tmpDir)
+	_ = os.MkdirAll(tmpDir, 0755)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -265,53 +265,83 @@ func TestContextWindowExtremes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	// 初始值应为 0
-	extremes, err := db.GetContextWindowExtremes()
+	now := time.Now()
+
+	// 插入第一条记录
+	err = db.InsertCallRecord(&CallRecord{
+		SessionID:         "s1",
+		ModelName:         "qwen-3-235b",
+		RequestSeq:        1,
+		LatencyMs:         100,
+		PromptTokens:      50000,
+		CompletionTokens:  10000,
+		CachedTokens:      0,
+		ThoughtsTokens:    0,
+		TotalTokens:       60000,
+		ContextWindowSize: 128000,
+		CurrentUsage:      20275,
+	})
+	if err != nil {
+		t.Fatalf("InsertCallRecord failed: %v", err)
+	}
+
+	// 插入第二条记录（更小的 input，更大的 output）
+	err = db.InsertCallRecord(&CallRecord{
+		SessionID:         "s1",
+		ModelName:         "qwen-coder",
+		RequestSeq:        2,
+		LatencyMs:         200,
+		PromptTokens:      30000,
+		CompletionTokens:  20000,
+		CachedTokens:      0,
+		ThoughtsTokens:    0,
+		TotalTokens:       50000,
+		ContextWindowSize: 200000,
+		CurrentUsage:      15000,
+	})
+	if err != nil {
+		t.Fatalf("InsertCallRecord failed: %v", err)
+	}
+
+	// 查询最值
+	extremes, err := db.GetContextWindowExtremes(now.Add(-1*time.Hour), now.Add(1*time.Hour))
 	if err != nil {
 		t.Fatalf("GetContextWindowExtremes failed: %v", err)
 	}
-	if extremes.MaxContextWindowSize != 0 {
-		t.Errorf("expected initial MaxContextWindowSize to be 0, got %d", extremes.MaxContextWindowSize)
+
+	// prompt_tokens=50000 > 30000，取第一条记录的模型
+	if extremes.MaxSingleInputTokens != 50000 {
+		t.Errorf("expected MaxSingleInputTokens 50000, got %d", extremes.MaxSingleInputTokens)
+	}
+	if extremes.MaxSingleInputModel != "qwen-3-235b" {
+		t.Errorf("expected MaxSingleInputModel 'qwen-3-235b', got '%s'", extremes.MaxSingleInputModel)
 	}
 
-	// 第一次更新
-	err = db.UpdateContextWindowExtremes(&ContextWindowExtremes{
-		MaxContextWindowSize: 128000,
-		MaxTotalInputTokens: 50000,
-		MaxTotalOutputTokens: 10000,
-	})
+	// completion_tokens=20000 > 10000，取第二条记录的模型
+	if extremes.MaxSingleOutputTokens != 20000 {
+		t.Errorf("expected MaxSingleOutputTokens 20000, got %d", extremes.MaxSingleOutputTokens)
+	}
+	if extremes.MaxSingleOutputModel != "qwen-coder" {
+		t.Errorf("expected MaxSingleOutputModel 'qwen-coder', got '%s'", extremes.MaxSingleOutputModel)
+	}
+
+	// MAX(prompt_tokens + completion_tokens) = 50000+10000 = 60000
+	if extremes.MaxCurrentUsage != 60000 {
+		t.Errorf("expected MaxCurrentUsage 60000, got %d", extremes.MaxCurrentUsage)
+	}
+	if extremes.MaxCurrentUsageModel != "qwen-3-235b" {
+		t.Errorf("expected MaxCurrentUsageModel 'qwen-3-235b', got '%s'", extremes.MaxCurrentUsageModel)
+	}
+
+	// 空时间范围应返回全 0
+	empty, err := db.GetContextWindowExtremes(now.Add(-2*time.Hour), now.Add(-1*time.Hour))
 	if err != nil {
-		t.Fatalf("UpdateContextWindowExtremes failed: %v", err)
+		t.Fatalf("GetContextWindowExtremes empty range failed: %v", err)
 	}
-
-	extremes, _ = db.GetContextWindowExtremes()
-	if extremes.MaxContextWindowSize != 128000 {
-		t.Errorf("expected MaxContextWindowSize 128000, got %d", extremes.MaxContextWindowSize)
-	}
-	if extremes.MaxTotalInputTokens != 50000 {
-		t.Errorf("expected MaxTotalInputTokens 50000, got %d", extremes.MaxTotalInputTokens)
-	}
-
-	// 第二次更新：更大的值应覆盖，更小的值应保留
-	err = db.UpdateContextWindowExtremes(&ContextWindowExtremes{
-		MaxContextWindowSize: 200000,
-		MaxTotalInputTokens: 30000,
-		MaxTotalOutputTokens: 20000,
-	})
-	if err != nil {
-		t.Fatalf("UpdateContextWindowExtremes second call failed: %v", err)
-	}
-
-	extremes, _ = db.GetContextWindowExtremes()
-	if extremes.MaxContextWindowSize != 200000 {
-		t.Errorf("expected MaxContextWindowSize 200000, got %d", extremes.MaxContextWindowSize)
-	}
-	if extremes.MaxTotalInputTokens != 50000 {
-		t.Errorf("expected MaxTotalInputTokens 50000 (kept max), got %d", extremes.MaxTotalInputTokens)
-	}
-	if extremes.MaxTotalOutputTokens != 20000 {
-		t.Errorf("expected MaxTotalOutputTokens 20000, got %d", extremes.MaxTotalOutputTokens)
+	if empty.MaxCurrentUsage != 0 || empty.MaxSingleInputTokens != 0 || empty.MaxSingleOutputTokens != 0 {
+		t.Errorf("expected empty extremes, got usage=%d input=%d output=%d",
+			empty.MaxCurrentUsage, empty.MaxSingleInputTokens, empty.MaxSingleOutputTokens)
 	}
 }

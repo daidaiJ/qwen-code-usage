@@ -1,7 +1,10 @@
 // Package database 数据库模型和接口
 package database
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // StatusLineInput Qwen Code status line 输入结构
 type StatusLineInput struct {
@@ -67,17 +70,19 @@ type CumulativeState struct {
 
 // CallRecord 单次调用记录
 type CallRecord struct {
-	ID               int64
-	SessionID        string
-	ModelName        string
-	RequestSeq       int
-	LatencyMs        int
-	PromptTokens     int
-	CompletionTokens int
-	CachedTokens     int
-	ThoughtsTokens   int
-	TotalTokens      int
-	RecordedAt       time.Time
+	ID                 int64
+	SessionID          string
+	ModelName          string
+	RequestSeq         int
+	LatencyMs          int
+	PromptTokens       int
+	CompletionTokens   int
+	CachedTokens       int
+	ThoughtsTokens     int
+	TotalTokens        int
+	ContextWindowSize  int
+	CurrentUsage       int
+	RecordedAt         time.Time
 }
 
 // RecordRequest record 请求
@@ -135,11 +140,17 @@ type StatsResponse struct {
 	EndTime          string                 `json:"end_time"`
 }
 
-// ContextWindowExtremes 上下文窗口历史最值（单行聚合）
+// ContextWindowExtremes 上下文窗口历史最值（从 call_records 查询结果）
 type ContextWindowExtremes struct {
-	MaxContextWindowSize int `json:"max_context_window_size"`
-	MaxTotalInputTokens  int `json:"max_total_input_tokens"`
-	MaxTotalOutputTokens int `json:"max_total_output_tokens"`
+	MaxCurrentUsage       int       `json:"max_current_usage"`
+	MaxCurrentUsageModel  string    `json:"max_current_usage_model"`
+	MaxCurrentUsageTime   time.Time `json:"max_current_usage_time"`
+	MaxSingleInputTokens  int       `json:"max_single_input_tokens"`
+	MaxSingleInputModel   string    `json:"max_single_input_model"`
+	MaxSingleInputTime    time.Time `json:"max_single_input_time"`
+	MaxSingleOutputTokens int       `json:"max_single_output_tokens"`
+	MaxSingleOutputModel  string    `json:"max_single_output_model"`
+	MaxSingleOutputTime   time.Time `json:"max_single_output_time"`
 }
 
 // TotalStats 汇总统计
@@ -153,4 +164,68 @@ type TotalStats struct {
 type SessionResponse struct {
 	Count   int    `json:"count"`
 	Message string `json:"message"`
+}
+
+// StreamEvent 流格式事件（来自 stdin 的 JSON 行）
+type StreamEvent struct {
+	Type    string          `json:"type"`
+	Subtype string          `json:"subtype,omitempty"`
+	UUID    string          `json:"uuid,omitempty"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Event   json.RawMessage `json:"event,omitempty"`
+	Message json.RawMessage `json:"message,omitempty"`
+	Request json.RawMessage `json:"request,omitempty"`
+	Response json.RawMessage `json:"response,omitempty"`
+}
+
+// StreamSessionStart session_start 事件数据
+type StreamSessionStart struct {
+	SessionID string `json:"session_id"`
+	CWD       string `json:"cwd"`
+}
+
+// StreamMessage message 结构（用于 user/assistant 类型）
+type StreamMessage struct {
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+	Usage   *StreamUsage    `json:"usage,omitempty"`
+}
+
+// StreamUsage token 用量
+type StreamUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// StreamMessageStart message_start 事件
+type StreamMessageStart struct {
+	Type    string        `json:"type"`
+	Message StreamMessage `json:"message"`
+}
+
+// StreamContentBlockDelta content_block_delta 事件
+type StreamContentBlockDelta struct {
+	Type  string `json:"type"`
+	Index int    `json:"index"`
+	Delta struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"delta"`
+}
+
+// StreamMetrics 流式请求的延迟和吞吐量统计
+type StreamMetrics struct {
+	SessionID      string
+	ModelName      string
+	RequestSeq     int
+	StartTimestamp time.Time
+	EndTimestamp   time.Time
+	LatencyMs      int64
+	InputTokens    int
+	OutputTokens   int
+	CachedTokens   int
+	TotalTokens    int
+	TokensPerSec   float64
 }

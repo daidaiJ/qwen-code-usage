@@ -86,13 +86,18 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		err := s.processModelMetrics(input.SessionID, modelName, metrics)
+		contextUsage := input.ContextWindow.CurrentUsage
+		if contextUsage == 0 {
+			contextUsage = input.ContextWindow.TotalInputTokens + input.ContextWindow.TotalOutputTokens
+		}
+		deltaInput, deltaOutput, err := s.processModelMetrics(input.SessionID, modelName, metrics,
+			input.ContextWindow.ContextWindowSize, contextUsage)
 		if err != nil {
 			errMsg = err.Error()
 			logger.LogWarn("failed to process metrics for model %s: %v", modelName, err)
 		} else {
 			recorded = true
-			logger.LogDebug("recorded metrics for model %s, seq=%d", modelName, metrics.API.TotalRequests)
+			logger.LogDebug("recorded metrics for model %s, seq=%d, deltaIn=%d, deltaOut=%d", modelName, metrics.API.TotalRequests, deltaInput, deltaOutput)
 		}
 
 		if statusLine == "" {
@@ -108,19 +113,6 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 		statusLine = fmt.Sprintf("model: %s | ctx:%.1f%%", modelName, input.ContextWindow.UsedPercentage)
 	}
 
-	// 更新上下文窗口历史最值（上下文窗口 = 输入 + 输出 tokens）
-	inputOutputSum := input.ContextWindow.TotalInputTokens + input.ContextWindow.TotalOutputTokens
-	if inputOutputSum > 0 {
-		extremes := &database.ContextWindowExtremes{
-			MaxContextWindowSize: inputOutputSum,
-			MaxTotalInputTokens:  input.ContextWindow.TotalInputTokens,
-			MaxTotalOutputTokens: input.ContextWindow.TotalOutputTokens,
-		}
-		if err := s.db.UpdateContextWindowExtremes(extremes); err != nil {
-			logger.LogWarn("failed to update context window extremes: %v", err)
-		}
-	}
-
 	resp := database.RecordResponse{
 		StatusLine: statusLine,
 		Recorded:   recorded,
@@ -128,19 +120,20 @@ func (s *Server) handleRecord(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // processModelMetrics 处理单个模型的指标
-func (s *Server) processModelMetrics(sessionID, modelName string, metrics database.ModelMetrics) error {
+// 返回单次请求的 input/output delta 值
+func (s *Server) processModelMetrics(sessionID, modelName string, metrics database.ModelMetrics, contextWindowSize, currentUsage int) (deltaInput, deltaOutput int, err error) {
 	prevState, err := s.db.GetCumulativeState(sessionID, modelName)
 	if err != nil {
-		return fmt.Errorf("failed to get cumulative state: %w", err)
+		return 0, 0, fmt.Errorf("failed to get cumulative state: %w", err)
 	}
 
 	deltaRequests := metrics.API.TotalRequests - prevState.TotalRequests
 	if deltaRequests <= 0 {
-		return nil
+		return 0, 0, nil
 	}
 
 	deltaLatencyMs := metrics.API.TotalLatencyMs - prevState.TotalLatencyMs
@@ -176,19 +169,21 @@ func (s *Server) processModelMetrics(sessionID, modelName string, metrics databa
 	}
 
 	record := &database.CallRecord{
-		SessionID:        sessionID,
-		ModelName:        modelName,
-		RequestSeq:       metrics.API.TotalRequests,
-		LatencyMs:        singleLatencyMs,
-		PromptTokens:     deltaPrompt,
-		CompletionTokens: deltaCompletion,
-		CachedTokens:     deltaCached,
-		ThoughtsTokens:   deltaThoughts,
-		TotalTokens:      deltaTotal,
+		SessionID:         sessionID,
+		ModelName:         modelName,
+		RequestSeq:        metrics.API.TotalRequests,
+		LatencyMs:         singleLatencyMs,
+		PromptTokens:      deltaPrompt,
+		CompletionTokens:  deltaCompletion,
+		CachedTokens:      deltaCached,
+		ThoughtsTokens:    deltaThoughts,
+		TotalTokens:       deltaTotal,
+		ContextWindowSize: contextWindowSize,
+		CurrentUsage:      currentUsage,
 	}
 
 	if err := s.db.InsertCallRecord(record); err != nil {
-		return fmt.Errorf("failed to insert call record: %w", err)
+		return 0, 0, fmt.Errorf("failed to insert call record: %w", err)
 	}
 
 	newState := &database.CumulativeState{
@@ -204,10 +199,10 @@ func (s *Server) processModelMetrics(sessionID, modelName string, metrics databa
 	}
 
 	if err := s.db.UpdateCumulativeState(newState); err != nil {
-		return fmt.Errorf("failed to update cumulative state: %w", err)
+		return 0, 0, fmt.Errorf("failed to update cumulative state: %w", err)
 	}
 
-	return nil
+	return deltaPrompt, deltaCompletion, nil
 }
 
 // formatStatusLine 格式化状态行
@@ -248,13 +243,13 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	_ = json.NewEncoder(w).Encode(stats)
 }
 
 // handleHealth 健康检查
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "OK")
+	_, _ = fmt.Fprint(w, "OK")
 }
 
 // handleSessionStart 会话开始
@@ -277,7 +272,7 @@ func (s *Server) handleSessionStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleSessionEnd 会话结束
@@ -306,12 +301,12 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 		resp.Message = "session ended, server shutting down"
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			s.Stop()
+			_ = s.Stop()
 		}()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleShutdown 强制关闭
@@ -321,10 +316,10 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logger.LogInfo("shutdown requested via HTTP")
-	fmt.Fprint(w, "OK")
+	_, _ = fmt.Fprint(w, "OK")
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		s.Stop()
+		_ = s.Stop()
 	}()
 }
 
@@ -392,8 +387,8 @@ func RunServer() error {
 	go func() {
 		<-stop
 		logger.LogInfo("shutdown signal received, cleaning up...")
-		server.Stop()
-		db.Close()
+		_ = server.Stop()
+		_ = db.Close()
 		lg.Close()
 		platform.RemovePIDFile()
 		logger.LogInfo("server shutdown complete")

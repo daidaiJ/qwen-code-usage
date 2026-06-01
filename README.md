@@ -1,6 +1,6 @@
 # qwen-usage
 
-Qwen Code 用量统计工具。通过监听 Qwen Code 的 status line JSON 数据，自动计算增量并存储到 SQLite，支持按天/周/月/5小时导出 Markdown 用量报表。
+Qwen Code 用量统计工具。通过 Status Line JSON 数据，计算增量并记录到数据库。
 
 ## 项目结构
 
@@ -21,7 +21,9 @@ qwen-usage/
 │   ├── server/
 │       └── server.go            # HTTP 服务
 │   ├── commands/
-│       └── commands.go          # 命令实现
+│       ├── record.go            # record 子命令
+│       ├── export.go            # export/clear 子命令
+│       └── session.go           # start/stop/kill 子命令
 │   └── logger/
 │       ├── logger.go            # 日志系统
 │       └── logger_test.go       # 日志测试
@@ -41,7 +43,11 @@ qwen-usage/
 └── README.md
 ```
 
-## 架构
+## 观测模式
+
+### Status Line 模式
+
+通过 status line JSON 数据，计算增量并记录到数据库。
 
 ```
 ┌─────────────┐   HTTP(超时100ms)   ┌─────────────────┐
@@ -55,6 +61,13 @@ qwen-usage/
        └──────────────────────────────►│   SQLite    │
                                        └─────────────┘
 ```
+
+**特点**：
+- 低延迟：只输出状态行，不阻塞
+- 适合高频调用场景
+- 通过累计值计算增量
+
+## 架构
 
 - **Server**：后台 HTTP 服务，维护内存缓存累计值（`sync.Mutex` 保护），计算增量后写入 SQLite
 - **CLI Client**：轻量客户端，server 不可用时自动降级直接写入 SQLite + 输出状态行
@@ -199,7 +212,13 @@ qwen-usage kill                # 强制关闭
 
 - **按模型统计**：请求数、延迟（Avg/P90/P95）、各类 token、缓存命中率、吞吐量
 - **汇总**：总调用、总 token、平均延迟
-- **上下文窗口历史最值**：最大上下文窗口容量、最大输入/输出 token 数
+- **上下文窗口历史最值**：
+
+| 指标 | 值 | 模型 | 时间 |
+|------|----|----|------|
+| 最大上下文使用量 | 0 | - | - |
+| 单次最大输入 | 0 | - | - |
+| 单次最大输出 | 0 | - | - |
 
 > 延迟百分位使用 SQL 窗口函数在数据库层计算，避免全量加载延迟数据到内存。
 
@@ -225,19 +244,11 @@ go test -v ./test/mocks
 
 ### `call_records` — 单次调用记录
 
-每次 API 调用的增量数据，包含延迟、各类 token 数、记录时间。按时间索引。
+每次 API 调用的增量数据，包含延迟、各类 token 数、上下文窗口状态、记录时间。按时间索引。
 
-### `context_window_extremes` — 上下文窗口历史最值
+### 上下文窗口历史最值
 
-单行聚合表，记录历史中出现的最大上下文窗口参数：
-
-| 字段 | 说明 |
-|------|------|
-| `max_context_window_size` | 最大上下文窗口容量 |
-| `max_total_input_tokens` | 最大输入 token 数 |
-| `max_total_output_tokens` | 最大输出 token 数 |
-
-每次 `record` 收到有效 `context_window_size > 0` 的数据时，使用 `MAX()` 语义原子更新。该表不记录逐条快照，仅保留历史最值。
+不再使用单独的表，而是直接从 `call_records` 查询 `MAX(prompt_tokens)`、`MAX(completion_tokens)`、`MAX(current_usage)`，并回溯对应的模型名和时间。支持按时间范围筛选。
 
 ## 开发
 

@@ -114,8 +114,8 @@ func TestLogFunctions(t *testing.T) {
 func TestLoggerRotate(t *testing.T) {
 	// 创建临时日志文件
 	tmpDir := filepath.Join(os.TempDir(), "qwen-usage-log-test")
-	os.MkdirAll(tmpDir, 0755)
-	defer os.RemoveAll(tmpDir)
+	_ = os.MkdirAll(tmpDir, 0755)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	logPath := filepath.Join(tmpDir, "test.log")
 

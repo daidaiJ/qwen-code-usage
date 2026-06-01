@@ -76,7 +76,7 @@ func newLogger() *Logger {
 	logPath := filepath.Join(config.GetDataDir(), "server.log")
 
 	// 确保日志目录存在
-	os.MkdirAll(filepath.Dir(logPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(logPath), 0755)
 
 	l := &Logger{
 		level:   INFO,
@@ -112,7 +112,7 @@ func (l *Logger) openFile() {
 	l.fileLogger = log.New(file, "", 0)
 }
 
-// checkRotate 检查日志轮转
+// checkRotate 检查日志轮转（调用方需持有 l.mu）
 func (l *Logger) checkRotate() {
 	if l.file == nil {
 		return
@@ -124,24 +124,19 @@ func (l *Logger) checkRotate() {
 	}
 
 	if info.Size() >= l.maxSize {
-		l.rotate()
+		l.rotateLocked()
 	}
 }
 
-// rotate 日志轮转
-func (l *Logger) rotate() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
+// rotateLocked 日志轮转（调用方需持有 l.mu）
+func (l *Logger) rotateLocked() {
 	if l.file != nil {
-		l.file.Close()
+		_ = l.file.Close()
 	}
 
-	// 备份旧日志
 	backup := l.logFile + "." + time.Now().Format("20060102_150405")
-	os.Rename(l.logFile, backup)
+	_ = os.Rename(l.logFile, backup)
 
-	// 重新打开
 	l.openFile()
 }
 
@@ -206,7 +201,7 @@ func (l *Logger) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file != nil {
-		l.file.Close()
+		_ = l.file.Close()
 		l.file = nil
 	}
 }
@@ -236,7 +231,7 @@ func NewMultiWriter(writers ...io.Writer) *MultiWriter {
 
 func (m *MultiWriter) Write(p []byte) (n int, err error) {
 	for _, w := range m.writers {
-		w.Write(p)
+		_, _ = w.Write(p)
 	}
 	return len(p), nil
 }

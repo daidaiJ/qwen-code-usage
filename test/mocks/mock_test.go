@@ -216,7 +216,7 @@ func TestMockHTTPClientReset(t *testing.T) {
 
 	// 发送请求
 	req, _ := http.NewRequest("GET", "/test", nil)
-	client.Do(req)
+	_, _ = client.Do(req)
 
 	// 设置响应
 	client.SetResponse(500, nil)

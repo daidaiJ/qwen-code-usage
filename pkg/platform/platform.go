@@ -31,7 +31,7 @@ func WritePIDFile() error {
 // RemovePIDFile 删除PID文件
 func RemovePIDFile() {
 	pidPath := GetPIDFilePath()
-	os.Remove(pidPath)
+	_ = os.Remove(pidPath)
 }
 
 // ReadPIDFile 读取PID文件

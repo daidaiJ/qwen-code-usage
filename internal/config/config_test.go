@@ -77,7 +77,7 @@ func TestEnsureDBPath(t *testing.T) {
 	}
 
 	// 清理
-	os.RemoveAll(tmpDir)
+	_ = os.RemoveAll(tmpDir)
 }
 
 func TestGetDataDir(t *testing.T) {

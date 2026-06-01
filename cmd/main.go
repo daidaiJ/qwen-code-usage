@@ -116,7 +116,7 @@ const (
 	helpRecord = `record - 记录用量并输出状态行
 
 用法:
-  qwen-usage record < input.json
+  qwen-usage record [options] < input.json
 
 功能:
   从 stdin 读取 Qwen Code 的 status line JSON，记录用量数据，
@@ -126,10 +126,12 @@ const (
   Qwen Code 的 status line JSON（通过 stdin 传入）
 
 选项:
+  -s              status_line 模式：只返回状态行，不记录到数据库
   -h, --help      显示帮助信息
 
 示例:
-  qwen-usage record < input.json
+  qwen-usage record < input.json           # 记录并输出状态行
+  qwen-usage record -s < input.json        # 只输出状态行
 `
 
 	helpExport = `export - 导出用量报表
@@ -209,7 +211,7 @@ func main() {
 		if checkHelp(args, helpRecord) {
 			return
 		}
-		os.Exit(commands.RunRecord())
+		os.Exit(runRecordCmd(args))
 	case "export":
 		if checkHelp(args, helpExport) {
 			return
@@ -262,7 +264,7 @@ func runExportCmd(args []string) int {
 			format = "json"
 		case "-n":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &limit)
+				_, _ = fmt.Sscanf(args[i+1], "%d", &limit)
 				i++
 			}
 		}
@@ -278,7 +280,7 @@ func runClearCmd(args []string) int {
 		switch args[i] {
 		case "-days":
 			if i+1 < len(args) {
-				fmt.Sscanf(args[i+1], "%d", &days)
+				_, _ = fmt.Sscanf(args[i+1], "%d", &days)
 				i++
 			}
 		}
@@ -300,4 +302,17 @@ func runServerCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runRecordCmd(args []string) int {
+	statusLineOnly := false
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-s":
+			statusLineOnly = true
+		}
+	}
+
+	return commands.RunRecord(statusLineOnly)
 }

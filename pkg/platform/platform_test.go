@@ -55,13 +55,13 @@ func TestGetDaemonHint(t *testing.T) {
 func TestPIDFileOperations(t *testing.T) {
 	// 使用临时目录模拟
 	tmpDir := filepath.Join(os.TempDir(), "qwen-usage-pid-test")
-	os.MkdirAll(tmpDir, 0755)
-	defer os.RemoveAll(tmpDir)
+	_ = os.MkdirAll(tmpDir, 0755)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// 修改GetDataDir的行为（通过设置临时HOME）
 	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	_ = os.Setenv("HOME", tmpDir)
+	defer func() { _ = os.Setenv("HOME", originalHome) }()
 
 	// 测试写入
 	err := WritePIDFile()

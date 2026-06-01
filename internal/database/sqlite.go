@@ -132,14 +132,6 @@ func (db *SQLiteDB) createTables() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_recorded_at ON call_records(recorded_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_model ON call_records(session_id, model_name)`,
-		`CREATE TABLE IF NOT EXISTS context_window_extremes (
-			id INTEGER PRIMARY KEY DEFAULT 1,
-			max_context_window_size INTEGER NOT NULL DEFAULT 0,
-			max_total_input_tokens INTEGER NOT NULL DEFAULT 0,
-			max_total_output_tokens INTEGER NOT NULL DEFAULT 0,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`INSERT OR IGNORE INTO context_window_extremes (id) VALUES (1)`,
 	}
 
 	for _, q := range queries {
@@ -147,6 +139,11 @@ func (db *SQLiteDB) createTables() error {
 			return err
 		}
 	}
+
+	// 迁移：为已有数据库添加新列（已存在时静默忽略）
+	_, _ = db.conn.Exec(`ALTER TABLE call_records ADD COLUMN context_window_size INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.conn.Exec(`ALTER TABLE call_records ADD COLUMN current_usage INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }
 
@@ -242,13 +239,15 @@ func (db *SQLiteDB) InsertCallRecord(record *CallRecord) error {
 
 	query := `INSERT INTO call_records
 		(session_id, model_name, request_seq, latency_ms, prompt_tokens,
-		completion_tokens, cached_tokens, thoughts_tokens, total_tokens, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		completion_tokens, cached_tokens, thoughts_tokens, total_tokens,
+		context_window_size, current_usage, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	result, err := db.conn.Exec(query,
 		record.SessionID, record.ModelName, record.RequestSeq, record.LatencyMs,
 		record.PromptTokens, record.CompletionTokens, record.CachedTokens,
-		record.ThoughtsTokens, record.TotalTokens, now,
+		record.ThoughtsTokens, record.TotalTokens,
+		record.ContextWindowSize, record.CurrentUsage, now,
 	)
 	if err != nil {
 		return err
@@ -265,7 +264,8 @@ func (db *SQLiteDB) GetCallRecords(startTime, endTime time.Time) ([]CallRecord, 
 	defer db.mu.RUnlock()
 
 	query := `SELECT id, session_id, model_name, request_seq, latency_ms,
-		prompt_tokens, completion_tokens, cached_tokens, thoughts_tokens, total_tokens, recorded_at
+		prompt_tokens, completion_tokens, cached_tokens, thoughts_tokens, total_tokens,
+		context_window_size, current_usage, recorded_at
 		FROM call_records WHERE recorded_at >= ? AND recorded_at <= ?
 		ORDER BY recorded_at ASC`
 
@@ -273,14 +273,15 @@ func (db *SQLiteDB) GetCallRecords(startTime, endTime time.Time) ([]CallRecord, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []CallRecord
 	for rows.Next() {
 		var r CallRecord
 		err := rows.Scan(&r.ID, &r.SessionID, &r.ModelName, &r.RequestSeq,
 			&r.LatencyMs, &r.PromptTokens, &r.CompletionTokens,
-			&r.CachedTokens, &r.ThoughtsTokens, &r.TotalTokens, &r.RecordedAt)
+			&r.CachedTokens, &r.ThoughtsTokens, &r.TotalTokens,
+			&r.ContextWindowSize, &r.CurrentUsage, &r.RecordedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +351,7 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 
 	pRows, pErr := db.conn.Query(percentileQuery, startTime, endTime)
 	if pErr == nil {
-		defer pRows.Close()
+		defer func() { _ = pRows.Close() }()
 		for pRows.Next() {
 			var mName string
 			var latMs int
@@ -398,8 +399,8 @@ func (db *SQLiteDB) GetStats(startTime, endTime time.Time) (*StatsResponse, erro
 		avgLatency = float64(totalLatency) / float64(len(records))
 	}
 
-	// 上下文窗口最值
-	extremes, err := db.GetContextWindowExtremes()
+	// 上下文窗口最值（从 call_records 直接查询）
+	extremes, err := db.GetContextWindowExtremes(startTime, endTime)
 	if err != nil {
 		extremes = nil
 	}
@@ -423,21 +424,23 @@ func (db *SQLiteDB) GetRecentRecords(limit int) ([]CallRecord, error) {
 	defer db.mu.RUnlock()
 
 	query := `SELECT id, session_id, model_name, request_seq, latency_ms,
-		prompt_tokens, completion_tokens, cached_tokens, thoughts_tokens, total_tokens, recorded_at
+		prompt_tokens, completion_tokens, cached_tokens, thoughts_tokens, total_tokens,
+		context_window_size, current_usage, recorded_at
 		FROM call_records ORDER BY recorded_at DESC LIMIT ?`
 
 	rows, err := db.conn.Query(query, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []CallRecord
 	for rows.Next() {
 		var r CallRecord
 		err := rows.Scan(&r.ID, &r.SessionID, &r.ModelName, &r.RequestSeq,
 			&r.LatencyMs, &r.PromptTokens, &r.CompletionTokens,
-			&r.CachedTokens, &r.ThoughtsTokens, &r.TotalTokens, &r.RecordedAt)
+			&r.CachedTokens, &r.ThoughtsTokens, &r.TotalTokens,
+			&r.ContextWindowSize, &r.CurrentUsage, &r.RecordedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -447,48 +450,44 @@ func (db *SQLiteDB) GetRecentRecords(limit int) ([]CallRecord, error) {
 	return records, nil
 }
 
-// GetContextWindowExtremes 获取上下文窗口历史最值
-func (db *SQLiteDB) GetContextWindowExtremes() (*ContextWindowExtremes, error) {
+// GetContextWindowExtremes 从 call_records 查询上下文窗口历史最值
+func (db *SQLiteDB) GetContextWindowExtremes(startTime, endTime time.Time) (*ContextWindowExtremes, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
 	extremes := &ContextWindowExtremes{}
-	query := `SELECT max_context_window_size, max_total_input_tokens, max_total_output_tokens
-		FROM context_window_extremes WHERE id = 1`
+	query := `SELECT
+		COALESCE(MAX(prompt_tokens + completion_tokens), 0), COALESCE(MAX(prompt_tokens), 0), COALESCE(MAX(completion_tokens), 0)
+		FROM call_records WHERE recorded_at >= ? AND recorded_at <= ?`
 
-	err := db.conn.QueryRow(query).Scan(
-		&extremes.MaxContextWindowSize,
-		&extremes.MaxTotalInputTokens,
-		&extremes.MaxTotalOutputTokens,
-	)
-	extremes.MaxContextWindowSize = (extremes.MaxTotalInputTokens + extremes.MaxTotalOutputTokens)
-	if err == sql.ErrNoRows {
-		return extremes, nil
-	}
+	var maxUsage, maxInput, maxOutput int
+	err := db.conn.QueryRow(query, startTime, endTime).Scan(&maxUsage, &maxInput, &maxOutput)
 	if err != nil {
 		return nil, err
 	}
+
+	extremes.MaxCurrentUsage = maxUsage
+	extremes.MaxSingleInputTokens = maxInput
+	extremes.MaxSingleOutputTokens = maxOutput
+
+	// 查询各最值对应的模型和时间
+	if maxUsage > 0 {
+		_ = db.conn.QueryRow(`SELECT model_name, recorded_at FROM call_records
+			WHERE prompt_tokens + completion_tokens = ? AND recorded_at >= ? AND recorded_at <= ? LIMIT 1`,
+			maxUsage, startTime, endTime).Scan(&extremes.MaxCurrentUsageModel, &extremes.MaxCurrentUsageTime)
+	}
+	if maxInput > 0 {
+		_ = db.conn.QueryRow(`SELECT model_name, recorded_at FROM call_records
+			WHERE prompt_tokens = ? AND recorded_at >= ? AND recorded_at <= ? LIMIT 1`,
+			maxInput, startTime, endTime).Scan(&extremes.MaxSingleInputModel, &extremes.MaxSingleInputTime)
+	}
+	if maxOutput > 0 {
+		_ = db.conn.QueryRow(`SELECT model_name, recorded_at FROM call_records
+			WHERE completion_tokens = ? AND recorded_at >= ? AND recorded_at <= ? LIMIT 1`,
+			maxOutput, startTime, endTime).Scan(&extremes.MaxSingleOutputModel, &extremes.MaxSingleOutputTime)
+	}
+
 	return extremes, nil
-}
-
-// UpdateContextWindowExtremes 更新上下文窗口历史最值（取 max）
-func (db *SQLiteDB) UpdateContextWindowExtremes(extremes *ContextWindowExtremes) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	query := `UPDATE context_window_extremes SET
-		max_context_window_size = MAX(max_context_window_size, ?),
-		max_total_input_tokens = MAX(max_total_input_tokens, ?),
-		max_total_output_tokens = MAX(max_total_output_tokens, ?),
-		updated_at = CURRENT_TIMESTAMP
-		WHERE id = 1`
-
-	_, err := db.conn.Exec(query,
-		extremes.MaxContextWindowSize,
-		extremes.MaxTotalInputTokens,
-		extremes.MaxTotalOutputTokens,
-	)
-	return err
 }
 
 // Close 关闭数据库连接
