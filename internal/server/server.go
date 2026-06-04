@@ -17,7 +17,8 @@ import (
 	"github.com/panda/qwen-usage/pkg/platform"
 )
 
-const version = "1.0.0"
+// Version 由构建时 ldflags 注入，格式为 git tag
+var Version = "dev"
 
 // Server HTTP 服务
 type Server struct {
@@ -361,7 +362,7 @@ func RunServer() error {
 	lg := logger.GetLogger()
 	defer lg.Close()
 
-	logger.LogInfo("qwen-usage server v%s starting", version)
+	logger.LogInfo("qwen-usage server v%s starting", Version)
 
 	// 写入 PID 文件
 	if err := platform.WritePIDFile(); err != nil {
@@ -400,5 +401,5 @@ func RunServer() error {
 
 // GetVersion 获取版本号
 func GetVersion() string {
-	return version
+	return Version
 }

@@ -1,0 +1,6 @@
+{
+  "server_addr": "127.0.0.1:9527",
+  "db_path": "~/.qwen/usage/usage.db",
+  "client_timeout_ms": 100,
+  "server_write_timeout_ms": 50
+}

@@ -27,6 +27,15 @@ func DefaultConfig() *Config {
 	}
 }
 
+// ExeDir 返回可执行文件所在目录
+func ExeDir() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(exePath), nil
+}
+
 var (
 	configOnce sync.Once
 	appConfig  *Config
@@ -53,27 +62,41 @@ func SetConfig(cfg *Config) {
 	configOnce.Do(func() {})
 }
 
-// loadConfig 从文件加载配置
+// loadConfig 从文件加载配置，exe 目录优先，回退到 ~/.qwen/usage/
 func loadConfig() *Config {
 	cfg := DefaultConfig()
 
+	// 优先读取 exe 目录下的 config.json（install 命令生成）
+	if exeDir, err := ExeDir(); err == nil {
+		if data, err := os.ReadFile(filepath.Join(exeDir, "config.json")); err == nil {
+			var fileCfg Config
+			if json.Unmarshal(data, &fileCfg) == nil {
+				mergeConfig(cfg, &fileCfg)
+				return cfg
+			}
+		}
+	}
+
+	// 回退到 ~/.qwen/usage/config.json
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return cfg
 	}
 
-	configPath := filepath.Join(homeDir, ".qwen", "usage", "config.json")
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(filepath.Join(homeDir, ".qwen", "usage", "config.json"))
 	if err != nil {
 		return cfg
 	}
 
 	var fileCfg Config
-	if err := json.Unmarshal(data, &fileCfg); err != nil {
+	if json.Unmarshal(data, &fileCfg) != nil {
 		return cfg
 	}
+	mergeConfig(cfg, &fileCfg)
+	return cfg
+}
 
-	// 合并配置
+func mergeConfig(cfg *Config, fileCfg *Config) {
 	if fileCfg.ServerAddr != "" {
 		cfg.ServerAddr = fileCfg.ServerAddr
 	}
@@ -86,8 +109,6 @@ func loadConfig() *Config {
 	if fileCfg.ServerWriteTimeoutMs > 0 {
 		cfg.ServerWriteTimeoutMs = fileCfg.ServerWriteTimeoutMs
 	}
-
-	return cfg
 }
 
 // EnsureDBPath 确保 DB 目录存在

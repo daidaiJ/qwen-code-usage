@@ -23,8 +23,8 @@ VERSION?=1.0.0
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 GIT_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-# Linker flags
-LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(GIT_COMMIT)"
+# Linker flags — 注入版本号到 server.Version
+LDFLAGS=-ldflags "-X github.com/panda/qwen-usage/internal/server.Version=$(VERSION)"
 
 .PHONY: all build build-windows build-linux build-mac clean test test-coverage lint run install uninstall help
 

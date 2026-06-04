@@ -38,11 +38,9 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          GIT_COMMIT=$(git rev-parse --short HEAD)
-          BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
           OUTPUT=qwen-usage-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
           go build \
-            -ldflags "-X main.version=${GITHUB_REF_NAME} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}" \
+            -ldflags "-X github.com/panda/qwen-usage/internal/server.Version=${GITHUB_REF_NAME}" \
             -o bin/${OUTPUT} \
             ./cmd
 

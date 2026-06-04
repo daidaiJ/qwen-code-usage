@@ -6,111 +6,129 @@ import (
 	"os"
 
 	"github.com/panda/qwen-usage/internal/commands"
+	"github.com/panda/qwen-usage/internal/config"
 	"github.com/panda/qwen-usage/internal/server"
 	"github.com/panda/qwen-usage/pkg/platform"
 )
 
 const (
-	version = "1.0.0"
-	usage   = `qwen-usage - Qwen Code 用量统计工具
+	usage = `qwen-usage - Qwen Code 用量统计工具
 
 用法:
   qwen-usage <command> [options]
 
 命令:
-  server    启动后台服务
-  start     增加会话计数（由 hook 调用）
-  stop      减少会话计数，为0时关闭服务（由 hook 调用）
-  kill      强制终止后台服务
-  record    记录用量并输出状态行
-  export    导出用量报表
-  clear     清理旧数据
-  version   显示版本号
+  install    安装：生成配置和启动脚本，可选创建开机自启动
+  uninstall  卸载：移除开机自启动的符号链接
+  status     查询 server 运行状态
+  stop       优雅停止 server
+  server     启动后台服务（前台）
+  record     记录用量并输出状态行
+  export     导出用量报表
+  clear      清理旧数据
+  version    显示版本号
 
 选项:
   -h, --help     显示帮助信息
 
 示例:
-  qwen-usage server                    # 启动服务
-  qwen-usage record < input.json      # 记录用量
-  qwen-usage export -period day       # 导出今日报表
-  qwen-usage export -period week      # 导出本周报表
-  qwen-usage export -period 5h        # 导出最近5小时报表
-  qwen-usage export -n 20             # 显示最近20条记录
-  qwen-usage export -n 50 -json       # 以JSON格式显示最近50条记录
-  qwen-usage clear                    # 清理31天前数据（默认）
-  qwen-usage clear -days 7            # 清理7天前数据
+  qwen-usage install              # 生成配置和启动脚本
+  qwen-usage install -a           # 生成配置和启动脚本并设置开机自启动
+  qwen-usage status               # 查询 server 状态
+  qwen-usage stop                 # 优雅停止 server
+  qwen-usage uninstall            # 移除开机自启动
+  qwen-usage server               # 前台启动服务
+  qwen-usage record < input.json  # 记录用量
+  qwen-usage export -period day   # 导出今日报表
+  qwen-usage clear                # 清理31天前数据
 `
 )
 
 // 子命令帮助文本
 const (
+	helpInstall = `install - 安装
+
+用法:
+  qwen-usage install [options]
+
+功能:
+  在 exe 所在目录生成默认配置文件和 VBS 启动脚本。
+  使用 -a 参数时，额外在开机启动目录创建符号链接，实现开机自启动。
+
+  幂等操作：已存在的文件不会被覆盖，符号链接已存在则跳过。
+
+选项:
+  -a, --auto-start    创建开机自启动符号链接
+  -h, --help          显示帮助信息
+
+示例:
+  qwen-usage install          # 仅生成配置和启动脚本
+  qwen-usage install -a       # 生成文件并设置开机自启动
+`
+
+	helpUninstall = `uninstall - 卸载
+
+用法:
+  qwen-usage uninstall
+
+功能:
+  移除开机启动目录中的 qwen-usage.vbs 符号链接。
+  不删除 exe 目录下的 config.json 和 start_server.vbs。
+
+  幂等操作：符号链接不存在时正常返回。
+
+选项:
+  -h, --help      显示帮助信息
+
+示例:
+  qwen-usage uninstall
+`
+
+	helpStatus = `status - 查询 server 状态
+
+用法:
+  qwen-usage status
+
+功能:
+  查询后台 server 的运行状态，包括监听地址和进程 PID。
+
+选项:
+  -h, --help      显示帮助信息
+
+示例:
+  qwen-usage status
+`
+
+	helpStop = `stop - 优雅停止 server
+
+用法:
+  qwen-usage stop
+
+功能:
+  向运行中的 server 发送关闭请求，等待其优雅退出并清理 PID 文件。
+  server 未运行时正常返回（幂等）。
+
+选项:
+  -h, --help      显示帮助信息
+
+示例:
+  qwen-usage stop
+`
+
 	helpServer = `server - 启动后台服务
 
 用法:
-  qwen-usage server [options]
+  qwen-usage server
 
 功能:
-  启动 HTTP 服务，接收 record/start/stop 请求，记录用量数据。
-
-选项:
-  -d, --daemon    提示后台运行方式（不实际启动后台）
-  -h, --help      显示帮助信息
-
-示例:
-  qwen-usage server              # 前台启动服务
-`
-
-	helpStart = `start - 增加会话计数
-
-用法:
-  qwen-usage start
-
-功能:
-  探测 server 是否就绪，未就绪则自动在后台启动 server，
-  然后发送 /session/start 增加会话计数。
-
-  由 Qwen Code 的 SessionStart hook 调用。
+  前台启动 HTTP 服务，接收 record 请求并记录用量数据。
+  通常由 VBS 启动脚本自动调用，无需手动运行。
 
 选项:
   -h, --help      显示帮助信息
 
 示例:
-  qwen-usage start
-`
-
-	helpStop = `stop - 减少会话计数
-
-用法:
-  qwen-usage stop
-
-功能:
-  向 server 发送 /session/end 减少会话计数。
-  当计数归零时，server 自动优雅退出。
-  若 server 已不存在，静默返回。
-
-  由 Qwen Code 的 SessionEnd hook 调用。
-
-选项:
-  -h, --help      显示帮助信息
-
-示例:
-  qwen-usage stop
-`
-
-	helpKill = `kill - 强制终止后台服务
-
-用法:
-  qwen-usage kill
-
-功能:
-  强制关闭正在运行的后台服务，无论会话计数是否为 0。
-
-选项:
-  -h, --help      显示帮助信息
-
-示例:
-  qwen-usage kill
+  qwen-usage server
 `
 
 	helpRecord = `record - 记录用量并输出状态行
@@ -188,6 +206,9 @@ func checkHelp(args []string, helpText string) bool {
 }
 
 func main() {
+	// 确保 config 在所有操作之前初始化（支持 exe 目录配置优先）
+	config.GetConfig()
+
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
 		os.Exit(1)
@@ -197,16 +218,31 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
+	case "install":
+		if checkHelp(args, helpInstall) {
+			return
+		}
+		runInstall(args)
+	case "uninstall":
+		if checkHelp(args, helpUninstall) {
+			return
+		}
+		runUninstall()
+	case "status":
+		if checkHelp(args, helpStatus) {
+			return
+		}
+		runStatus()
+	case "stop":
+		if checkHelp(args, helpStop) {
+			return
+		}
+		runStop()
 	case "server":
 		if checkHelp(args, helpServer) {
 			return
 		}
-		runServerCmd(args)
-	case "start":
-		if checkHelp(args, helpStart) {
-			return
-		}
-		os.Exit(commands.RunStart())
+		runServerCmd()
 	case "record":
 		if checkHelp(args, helpRecord) {
 			return
@@ -222,18 +258,8 @@ func main() {
 			return
 		}
 		os.Exit(runClearCmd(args))
-	case "stop":
-		if checkHelp(args, helpStop) {
-			return
-		}
-		os.Exit(commands.RunStop())
-	case "kill":
-		if checkHelp(args, helpKill) {
-			return
-		}
-		os.Exit(commands.RunKill())
 	case "version", "-v", "--version":
-		fmt.Printf("qwen-usage version %s\n", server.GetVersion())
+		fmt.Println(server.GetVersion())
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 	default:
@@ -241,6 +267,74 @@ func main() {
 		fmt.Print(usage)
 		os.Exit(1)
 	}
+}
+
+func runInstall(args []string) {
+	autoStart := false
+	for _, arg := range args {
+		if arg == "-a" || arg == "--auto-start" {
+			autoStart = true
+		}
+	}
+
+	cfgPath, err := platform.GenerateConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "生成配置文件失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("配置文件: %s\n", cfgPath)
+
+	vbsPath, err := platform.GenerateVBS()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "生成启动脚本失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("启动脚本: %s\n", vbsPath)
+
+	if autoStart {
+		if err := platform.InstallStartup(); err != nil {
+			fmt.Fprintf(os.Stderr, "设置开机自启动失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("开机自启动: %s\\qwen-usage.lnk\n", platform.StartupDir())
+	}
+
+	fmt.Println("安装完成")
+}
+
+func runUninstall() {
+	if err := platform.UninstallStartup(); err != nil {
+		fmt.Fprintf(os.Stderr, "移除自启动脚本失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("自启动脚本已移除（配置文件和启动脚本保留在 exe 目录）")
+}
+
+func runStatus() {
+	running, pid, err := platform.QueryStatus()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "查询状态失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfg := config.GetConfig()
+	if running {
+		fmt.Printf("server 运行中\n")
+		fmt.Printf("  地址: %s\n", cfg.ServerAddr)
+		if pid > 0 {
+			fmt.Printf("  PID:  %d\n", pid)
+		}
+	} else {
+		fmt.Println("server 未运行")
+	}
+}
+
+func runStop() {
+	if err := platform.StopServer(); err != nil {
+		fmt.Fprintf(os.Stderr, "停止 server 失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("server 已停止")
 }
 
 func runExportCmd(args []string) int {
@@ -289,15 +383,7 @@ func runClearCmd(args []string) int {
 	return commands.RunClear(days)
 }
 
-func runServerCmd(args []string) {
-	// 检查是否后台运行
-	for _, arg := range args {
-		if arg == "-d" || arg == "--daemon" {
-			fmt.Println(platform.GetDaemonHint())
-			break
-		}
-	}
-
+func runServerCmd() {
 	if err := server.RunServer(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
