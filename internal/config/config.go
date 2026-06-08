@@ -101,7 +101,7 @@ func mergeConfig(cfg *Config, fileCfg *Config) {
 		cfg.ServerAddr = fileCfg.ServerAddr
 	}
 	if fileCfg.DBPath != "" {
-		cfg.DBPath = fileCfg.DBPath
+		cfg.DBPath = expandTilde(fileCfg.DBPath)
 	}
 	if fileCfg.ClientTimeoutMs > 0 {
 		cfg.ClientTimeoutMs = fileCfg.ClientTimeoutMs
@@ -109,6 +109,16 @@ func mergeConfig(cfg *Config, fileCfg *Config) {
 	if fileCfg.ServerWriteTimeoutMs > 0 {
 		cfg.ServerWriteTimeoutMs = fileCfg.ServerWriteTimeoutMs
 	}
+}
+
+// expandTilde 将路径开头的 ~ 展开为用户主目录
+func expandTilde(path string) string {
+	if len(path) > 0 && path[0] == '~' {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(homeDir, path[1:])
+		}
+	}
+	return path
 }
 
 // EnsureDBPath 确保 DB 目录存在

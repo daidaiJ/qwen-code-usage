@@ -90,3 +90,37 @@ func TestGetDataDir(t *testing.T) {
 		t.Errorf("expected GetDataDir to be %s, got %s", expected, dir)
 	}
 }
+
+func TestExpandTilde(t *testing.T) {
+	homeDir, _ := os.UserHomeDir()
+
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"~/.qwen/usage/usage.db", filepath.Join(homeDir, ".qwen", "usage", "usage.db")},
+		{"/absolute/path/db.db", "/absolute/path/db.db"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		got := expandTilde(tt.input)
+		if got != tt.expected {
+			t.Errorf("expandTilde(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestMergeConfigExpandsTilde(t *testing.T) {
+	cfg := DefaultConfig()
+	fileCfg := &Config{
+		DBPath: "~/.qwen/usage/custom.db",
+	}
+	mergeConfig(cfg, fileCfg)
+
+	homeDir, _ := os.UserHomeDir()
+	expected := filepath.Join(homeDir, ".qwen", "usage", "custom.db")
+	if cfg.DBPath != expected {
+		t.Errorf("expected merged DBPath to be %s, got %s", expected, cfg.DBPath)
+	}
+}
