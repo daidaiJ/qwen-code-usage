@@ -3,6 +3,7 @@ package database
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -213,6 +214,19 @@ type StreamContentBlockDelta struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"delta"`
+}
+
+// FormatContextWindowSize 将 context_window_size 格式化为可读字符串
+// >= 1000000 显示为 "1M"、"2M"；< 1000000 按 1024 算 K，如 "128K"、"200K"
+// size <= 0 时返回空字符串，调用方可据此决定是否显示
+func FormatContextWindowSize(size int) string {
+	if size <= 0 {
+		return ""
+	}
+	if size >= 1000000 {
+		return fmt.Sprintf("%dM", size/1000000)
+	}
+	return fmt.Sprintf("%dK", size/1024)
 }
 
 // StreamMetrics 流式请求的延迟和吞吐量统计

@@ -219,8 +219,13 @@ func formatStatusLine(input database.StatusLineInput, modelName string, metrics 
 		cachePercent = float64(cachedTokens) * 100 / float64(promptTokens)
 	}
 
-	return fmt.Sprintf("API:%d | cached:%.0f%% | ctx:%.1f%% | tokens:%d | model: %s",
-		apiRequests, cachePercent, ctxPercent, totalTokens, modelName)
+	windowStr := database.FormatContextWindowSize(input.ContextWindow.ContextWindowSize)
+	if windowStr != "" {
+		windowStr = " | window:" + windowStr
+	}
+
+	return fmt.Sprintf("API:%d | cached:%.0f%% | ctx:%.1f%%%s | tokens:%d | model: %s",
+		apiRequests, cachePercent, ctxPercent, windowStr, totalTokens, modelName)
 }
 
 // handleStats 处理stats请求

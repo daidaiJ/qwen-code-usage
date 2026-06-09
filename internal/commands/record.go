@@ -126,8 +126,13 @@ func recordLocalFallback(input database.StatusLineInput) string {
 			cachePercent = float64(cachedTokens) * 100 / float64(promptTokens)
 		}
 
-		statusLine = fmt.Sprintf("API:%d | cached:%.0f%% | ctx:%.1f%% | tokens:%d | model: %s",
-			apiRequests, cachePercent, input.ContextWindow.UsedPercentage, totalTokens, modelName)
+		windowStr := database.FormatContextWindowSize(input.ContextWindow.ContextWindowSize)
+		if windowStr != "" {
+			windowStr = " | window:" + windowStr
+		}
+
+		statusLine = fmt.Sprintf("API:%d | cached:%.0f%% | ctx:%.1f%%%s | tokens:%d | model: %s",
+			apiRequests, cachePercent, input.ContextWindow.UsedPercentage, windowStr, totalTokens, modelName)
 	}
 
 	_ = recorded
@@ -228,6 +233,11 @@ func formatStatusLineLocal(input database.StatusLineInput, modelName string, met
 		cachePercent = float64(cachedTokens) * 100 / float64(promptTokens)
 	}
 
-	return fmt.Sprintf("API:%d | cached:%.0f%% | ctx:%.1f%% | tokens:%d | model: %s",
-		apiRequests, cachePercent, ctxPercent, totalTokens, modelName)
+	windowStr := database.FormatContextWindowSize(input.ContextWindow.ContextWindowSize)
+	if windowStr != "" {
+		windowStr = " | window:" + windowStr
+	}
+
+	return fmt.Sprintf("API:%d | cached:%.0f%% | ctx:%.1f%%%s | tokens:%d | model: %s",
+		apiRequests, cachePercent, ctxPercent, windowStr, totalTokens, modelName)
 }
